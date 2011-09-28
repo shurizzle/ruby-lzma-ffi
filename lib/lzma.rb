@@ -53,11 +53,11 @@ class LZMA
     class LZMAStream < FFI::Struct
       layout \
         :next_in, :pointer,
-        :avail_in, :uint,
+        :avail_in, :size_t,
         :total_in, :uint64,
 
         :next_out, :pointer,
-        :avail_out, :uint,
+        :avail_out, :size_t,
         :total_out, :uint64,
 
         :allocator, :pointer,
@@ -69,8 +69,8 @@ class LZMA
         :reserved_ptr4, :pointer,
         :reserved_int1, :uint64,
         :reserved_int2, :uint64,
-        :reserved_int3, :uint,
-        :reserved_int4, :uint,
+        :reserved_int3, :size_t,
+        :reserved_int4, :size_t,
         :reserved_enum1, :lzma_reserved_enum,
         :reserved_enum2, :lzma_reserved_enum
     end
@@ -81,18 +81,12 @@ class LZMA
   end
 
   class Stream
-    INIT = [nil, 0, 0, nil, 0, 0, nil, nil, nil, nil, nil, nil, 0, 0, 0, 0, 0, 0].pack('PL!QPL!QPPPPPPQQL!L!i!i!').pointer.freeze
-
     def initialize(stream, buf_len=4096)
       @stream, @buf_len = stream, buf_len || 4096
       @buf = (' ' * @buf_len).pointer
-      @struct = C::LZMAStream.new(INIT)
+      @struct = C::LZMAStream.new
 
       ObjectSpace.define_finalizer(self, method(:finalize))
-    end
-
-    def next_in
-      @struct[:next_in].read_string rescue nil
     end
 
     def avail_in
@@ -101,10 +95,6 @@ class LZMA
 
     def total_in
       @struct[:total_in]
-    end
-
-    def next_out
-      @struct[:next_out].read_string rescue nil
     end
 
     def avail_out
@@ -135,8 +125,9 @@ class LZMA
       }
     end
 
-    def decoder(limit, flags)
-      raise RuntimeError, "lzma_stream_decoder error" if C.lzma_auto_decoder(@struct.pointer, 0xffffffffffffffff, 0x02 | 0x08) != :OK
+    def decoder(limit=-1, flags=0)
+      code = nil
+      raise RuntimeError, "lzma_stream_decoder error: #{code}" if (code = C.lzma_auto_decoder(@struct.pointer, limit, flags)) != :OK
       self
     end
 
@@ -169,14 +160,15 @@ class LZMA
     res = ''
     blk = lambda {|chunk| res << chunk } unless block_given?
 
-    stream = Stream.new(what, buf_len).decoder(0xffffffffffffffff, 0x02 | 0x08)
+    stream = Stream.new(what, buf_len).decoder
 
     until what.eof?
       stream.read
       action = what.eof? ? :FINISH : :RUN
 
       begin
-        raise RuntimeError, "lzma_code error" unless [:OK, :STREAM_END].include?(stream.code(action))
+        code = nil
+        raise RuntimeError, "lzma_code error: #{code}" unless [:OK, :STREAM_END].include?(code = stream.code(action))
 
         blk.call(stream.next_out)
       end while stream.avail_out.zero?
@@ -189,6 +181,7 @@ class LZMA
   end
 
   def self.extract(file, to=file.gsub(/\.(xz|lzma)$/, ''))
+    File.unlink(to) if File.file?(to)
     File.open(to, 'wb') {|f|
       decompress(File.open(file)) {|chunk|
         f.write(chunk)
