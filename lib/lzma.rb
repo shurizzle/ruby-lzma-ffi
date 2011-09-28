@@ -18,6 +18,7 @@
 #++
 
 require 'ffi'
+require 'stringio'
 
 class String
   def pointer
