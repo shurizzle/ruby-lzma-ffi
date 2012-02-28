@@ -1,4 +1,4 @@
-lzma-ffi
+ffi-lzma
 ========
 
 ruby bindings for liblzma
